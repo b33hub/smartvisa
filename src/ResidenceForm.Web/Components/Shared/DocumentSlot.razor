@@ -123,45 +123,61 @@
         Session.RemoveDocument(Kind);
     }
 
-    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    // Reads the file before the UI changes, because BeginReading removes the <InputFile> from the DOM
+private async Task OnFileSelected(InputFileChangeEventArgs e)
+{
+    var file = e.File;
+    if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
     {
-        var file = e.File;
-        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-        {
-            Session.FailReading(Kind, "Please upload a JPG, PNG or WebP photo (PDF files aren't supported here).", null);
-            inputKey++;
-            return;
-        }
-
-        Session.BeginReading(Kind, file.Name);            // locks the form and shows the spinner before the slow work starts
-        try
-        {
-            var imageBytes = await ReadAllBytesAsync(file);
-            var preview = await Task.Run(() => Previewer.CreateDataUrl(imageBytes));
-            var reading = await Task.Run(() => ReadDocument.Execute(Kind, imageBytes));
-            Session.CompleteReading(Kind, preview, reading);
-        }
-        catch (IOException)
-        {
-            Session.FailReading(Kind, "That file is larger than 8 MB. Please upload a smaller photo.", null);
-        }
-        catch (InvalidDataException ex)
-        {
-            Session.FailReading(Kind, ex.Message, null);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "A {Kind} image could not be processed", Kind);
-            var detail = Environment.IsDevelopment()
-                ? $"{ex.GetType().Name}: {ex.Message}{(ex.InnerException is null ? "" : " (" + ex.InnerException.Message + ")")}"
-                : null;
-            Session.FailReading(Kind, "Sorry, that image couldn't be processed. You can still fill the boxes by hand.", detail);
-        }
-        finally
-        {
-            inputKey++;                                    // a fresh file input, so the same file can be chosen again
-        }
+        Session.FailReading(Kind, "Please upload a JPG, PNG or WebP photo (PDF files aren't supported here).", null);
+        inputKey++;
+        return;
     }
+
+    byte[] imageBytes;
+    try
+    {
+        imageBytes = await ReadAllBytesAsync(file);   // must happen while the InputFile is still rendered
+    }
+    catch (IOException)
+    {
+        Session.FailReading(Kind, "That file is larger than 8 MB. Please upload a smaller photo.", null);
+        inputKey++;
+        return;
+    }
+    catch (Exception ex)
+    {
+        Logger.LogError(ex, "A {Kind} image could not be read from the browser", Kind);
+        Session.FailReading(Kind, "Sorry, that image couldn't be uploaded. Please try again.", null);
+        inputKey++;
+        return;
+    }
+
+    Session.BeginReading(Kind, file.Name);   // locks the form and shows the spinner; safe now that the bytes are in memory
+    try
+    {
+        var preview = await Task.Run(() => Previewer.CreateDataUrl(imageBytes));
+        var reading = await Task.Run(() => ReadDocument.Execute(Kind, imageBytes));
+        Session.CompleteReading(Kind, preview, reading);
+    }
+    catch (InvalidDataException ex)
+    {
+        Session.FailReading(Kind, ex.Message, null);
+    }
+    catch (Exception ex)
+    {
+        Logger.LogError(ex, "A {Kind} image could not be processed", Kind);
+        var detail = Environment.IsDevelopment()
+            ? $"{ex.GetType().Name}: {ex.Message}{(ex.InnerException is null ? "" : " (" + ex.InnerException.Message + ")")}"
+            : null;
+        Session.FailReading(Kind, "Sorry, that image couldn't be processed. You can still fill the boxes by hand.", detail);
+    }
+    finally
+    {
+        inputKey++;   // a fresh file input, so the same file can be chosen again
+    }
+}
+
 
     private static async Task<byte[]> ReadAllBytesAsync(IBrowserFile file)
     {
