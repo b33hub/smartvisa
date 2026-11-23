@@ -1,0 +1,195 @@
+@implements IDisposable
+@inject ReadDocumentUseCase ReadDocument
+@inject IImagePreviewer Previewer
+@inject FormSession Session
+@inject Microsoft.Extensions.Logging.ILogger<DocumentSlot> Logger
+@inject Microsoft.Extensions.Hosting.IHostEnvironment Environment
+
+@* One upload slot: empty (drop zone), reading (spinner), or loaded (preview, remove button, what was read).
+   It listens to the session itself because its only parameter never changes, so Blazor would not redraw it otherwise. *@
+
+@{
+    var document = Session.Document(Kind);
+}
+
+<section class="doc-slot @(document.IsReading ? "is-reading" : "") @(document.IsLoaded ? "is-loaded" : "")">
+    <header class="doc-head">
+        <span class="doc-ico" aria-hidden="true">@Icon</span>
+        <div>
+            <b>@Title</b>
+            <small class="hint">@Description</small>
+        </div>
+    </header>
+
+    @if (document.IsReading)
+    {
+        <div class="doc-loading" role="status" aria-live="polite">
+            <span class="spinner-ring" aria-hidden="true"></span>
+            <span>Reading <i>@document.FileName</i>… this usually takes a few seconds.</span>
+        </div>
+    }
+    else if (document.IsLoaded)
+    {
+        <figure class="doc-preview @(expanded ? "expanded" : "")">
+            <img src="@document.PreviewDataUrl" alt="Preview of the uploaded @Title" @onclick="ToggleExpanded" />
+            <figcaption>
+                <span class="doc-file">@document.FileName</span>
+                <button type="button" class="link" @onclick="ToggleExpanded">@(expanded ? "Smaller" : "Enlarge")</button>
+            </figcaption>
+        </figure>
+
+        <p class="doc-summary">
+            Filled <b>@document.FilledCount</b> @(document.FilledCount == 1 ? "box" : "boxes")@(document.KeptCount > 0 ? $", kept {document.KeptCount} you had already filled in" : "").
+            Please compare with your document.
+        </p>
+
+        <button type="button" class="btn danger wide-btn" disabled="@Session.IsBusy" @onclick="Remove">
+            ✕ Remove and clear its data
+        </button>
+
+        <details class="doc-details">
+            <summary>What we read</summary>
+            <table class="pc-result">
+                <tbody>
+                    @foreach (var (field, label, finding) in document.Reading!.FormMapping())
+                    {
+                        <tr>
+                            <th>@label</th>
+                            <td>@if (finding.HasValue) { <span dir="auto">@finding.Display</span> } else { <text>—</text> }</td>
+                            <td>@ConfidenceBadge(finding)</td>
+                            <td class="hint">@OutcomeText(document, field)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @foreach (var note in document.Reading.Notes) { <div class="note warn">@note</div> }
+        </details>
+    }
+    else
+    {
+        <label class="pc-drop @(Session.IsBusy ? "busy" : "")">
+            <InputFile @key="inputKey" OnChange="OnFileSelected" accept="image/jpeg,image/png,image/webp,image/bmp" disabled="@Session.IsBusy" />
+            <span>Choose a photo, or drop it here<br /><small>JPG, PNG or WebP · max 8 MB</small></span>
+        </label>
+    }
+
+    @if (document.Error is not null)
+    {
+        <div class="note err">
+            @document.Error
+            @if (document.TechnicalDetail is not null)
+            {
+                <details><summary>Technical details (development only)</summary><code>@document.TechnicalDetail</code></details>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private const long MaxImageBytes = 8 * 1024 * 1024;
+
+    [Parameter, EditorRequired] public DocumentKind Kind { get; set; }
+
+    private bool expanded;
+    private int inputKey;
+
+    private string Title => Kind switch
+    {
+        DocumentKind.Passport => "Passport",
+        DocumentKind.CivilIdFront => "Civil ID, front",
+        _ => "Civil ID, back"
+    };
+
+    private string Description => Kind switch
+    {
+        DocumentKind.Passport => "The page with your photo and the two lines of code at the bottom.",
+        DocumentKind.CivilIdFront => "Name, civil ID number and nationality.",
+        _ => "Profession, address and the address (PACI) number."
+    };
+
+    private string Icon => Kind == DocumentKind.Passport ? "🛂" : "🪪";
+
+    protected override void OnInitialized() => Session.Changed += OnSessionChanged;
+
+    private void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+
+    private void ToggleExpanded() => expanded = !expanded;
+
+    private void Remove()
+    {
+        expanded = false;
+        Session.RemoveDocument(Kind);
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            Session.FailReading(Kind, "Please upload a JPG, PNG or WebP photo (PDF files aren't supported here).", null);
+            inputKey++;
+            return;
+        }
+
+        Session.BeginReading(Kind, file.Name);            // locks the form and shows the spinner before the slow work starts
+        try
+        {
+            var imageBytes = await ReadAllBytesAsync(file);
+            var preview = await Task.Run(() => Previewer.CreateDataUrl(imageBytes));
+            var reading = await Task.Run(() => ReadDocument.Execute(Kind, imageBytes));
+            Session.CompleteReading(Kind, preview, reading);
+        }
+        catch (IOException)
+        {
+            Session.FailReading(Kind, "That file is larger than 8 MB. Please upload a smaller photo.", null);
+        }
+        catch (InvalidDataException ex)
+        {
+            Session.FailReading(Kind, ex.Message, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "A {Kind} image could not be processed", Kind);
+            var detail = Environment.IsDevelopment()
+                ? $"{ex.GetType().Name}: {ex.Message}{(ex.InnerException is null ? "" : " (" + ex.InnerException.Message + ")")}"
+                : null;
+            Session.FailReading(Kind, "Sorry, that image couldn't be processed. You can still fill the boxes by hand.", detail);
+        }
+        finally
+        {
+            inputKey++;                                    // a fresh file input, so the same file can be chosen again
+        }
+    }
+
+    private static async Task<byte[]> ReadAllBytesAsync(IBrowserFile file)
+    {
+        using var buffer = new MemoryStream();
+        await using var stream = file.OpenReadStream(MaxImageBytes);
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
+    }
+
+    private static string OutcomeText(UploadedDocument document, string field) =>
+        document.Outcomes.TryGetValue(field, out var outcome)
+            ? outcome switch
+            {
+                FillOutcome.Filled => "Filled",
+                FillOutcome.SameAsEntered => "Same as yours",
+                _ => "Kept your entry"
+            }
+            : "";
+
+    private static MarkupString ConfidenceBadge(Finding finding)
+    {
+        var note = System.Net.WebUtility.HtmlEncode(finding.Note ?? "");
+        return new MarkupString(finding.Confidence switch
+        {
+            Confidence.Good => $"<span class=\"st ok\" title=\"{note}\">✓ verified</span>",
+            Confidence.Read => $"<span class=\"st read\" title=\"{note}\">read</span>",
+            Confidence.Check => $"<span class=\"st warn\" title=\"{note}\">⚠ please check{(note.Length > 0 ? ": " + note : "")}</span>",
+            _ => "<span class=\"st none\">Not found</span>"
+        });
+    }
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ResidenceForm.Application\ResidenceForm.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PDFsharp" Version="6.1.1" />                                        <!-- MIT: read and fill the PDF -->
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />                                      <!-- MIT: images, flat PDF drawing -->
+    <PackageReference Include="SkiaSharp.HarfBuzz" Version="2.88.8" />                             <!-- MIT: Arabic shaping -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.8" />
+    <!-- PrivateAssets=none: the native files these two packages copy must flow on to the Web project -->
+    <PackageReference Include="Tesseract" Version="5.2.0" PrivateAssets="none" />                  <!-- Apache-2.0: code lines -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" PrivateAssets="none" />  <!-- MIT: printed text -->
+  </ItemGroup>
+
+</Project>

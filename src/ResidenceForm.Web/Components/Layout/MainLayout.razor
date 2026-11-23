@@ -1,0 +1,65 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject FormSession Session
+@inject IJSRuntime JS
+
+<div class="lpx @(collapsed ? "collapsed" : "") @(menuOpen ? "menu-open" : "")">
+
+    <aside class="lpx-sidebar">
+        <div class="lpx-brand">
+            <span class="lpx-logo" aria-hidden="true">🪪</span>
+            <span class="lpx-brand-text"><b>Residence</b><small>Request Assistant</small></span>
+        </div>
+
+        <div class="lpx-menu-title">Application</div>
+        <nav class="lpx-menu" aria-label="Steps">
+            @for (int i = 0; i < FormSchema.Steps.Length; i++)
+            {
+                var n = i;
+                <button type="button" class="lpx-item @(Session.Step == n ? "active" : "") @(Session.Step > n ? "done" : "")" title="@FormSchema.Steps[n]" disabled="@Session.IsBusy" @onclick="() => Go(n)">
+                    <span class="ico">@FormSchema.StepIcons[n]</span>
+                    <span class="txt">@FormSchema.Steps[n]</span>
+                    @if (Session.Step > n) { <span class="chk">✓</span> }
+                </button>
+            }
+        </nav>
+
+        <div class="lpx-sidefoot">
+            <small>Unofficial helper for the Ministry of Interior residence request form. Check the PDF before submitting.</small>
+        </div>
+    </aside>
+
+    <div class="lpx-main">
+        <header class="lpx-topbar">
+            <button type="button" class="icon-btn" aria-label="Toggle menu" @onclick="ToggleMenu">☰</button>
+            <nav class="crumbs" aria-label="Breadcrumb">
+                <span>Home</span><i>/</i><span>Residence request</span><i>/</i><b>@FormSchema.Steps[Session.Step]</b>
+            </nav>
+            <span class="spacer"></span>
+            <button type="button" class="icon-btn" title="Light / dark" aria-label="Toggle theme" @onclick="ToggleTheme">🌓</button>
+            <button type="button" class="ghost" disabled="@Session.IsBusy" @onclick="Session.Reset">Start over</button>
+        </header>
+
+        <main class="lpx-content">@Body</main>
+
+        <footer class="lpx-footer">
+            <span>Your answers live only in this browser session and are never stored on the server.</span>
+        </footer>
+    </div>
+
+    <div class="lpx-backdrop" @onclick="CloseMenu"></div>
+</div>
+
+@code {
+    private bool collapsed, menuOpen;
+
+    protected override void OnInitialized() => Session.Changed += OnChanged;
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Session.Changed -= OnChanged;
+
+    private void ToggleMenu() { collapsed = !collapsed; menuOpen = !menuOpen; }     // desktop collapses, mobile opens the drawer
+    private void CloseMenu() => menuOpen = false;
+    private async Task ToggleTheme() => await JS.InvokeVoidAsync("toggleTheme");
+
+    private void Go(int n) { menuOpen = false; Session.GoTo(n); }
+}

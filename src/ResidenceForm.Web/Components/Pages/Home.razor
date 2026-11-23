@@ -1,0 +1,253 @@
+@page "/"
+@implements IDisposable
+@inject FormSession Session
+@inject GenerateFormDocumentUseCase DocumentWriter
+@inject IDropdownCatalog Options
+@inject IJSRuntime JS
+
+<PageTitle>Residence Request Assistant</PageTitle>
+
+<div class="progress" aria-hidden="true"><div class="bar" style="width:@((Session.Step + 1) * 100 / FormSchema.Steps.Length)%"></div></div>
+<p class="stepcount">Step @(Session.Step + 1) of @FormSchema.Steps.Length · <span class="req">*</span> = required</p>
+
+@if (Session.ShowRequired && Session.Step < FormSchema.ReviewStep)
+{
+    <div class="note err">Please complete the highlighted fields to continue.</div>
+}
+
+<div class="step-layout @(DocumentsForStep.Count > 0 ? "with-panel" : "")">
+<div class="form-column">
+<fieldset class="lockable" disabled="@Session.IsBusy">
+<section class="card">
+    @switch (Session.Step)
+    {
+        case 0:
+            <h1>Request</h1>
+            <p class="sub">What do you want to apply for? Pick from the lists, no Arabic needed.</p>
+            <div class="grid">
+                <FormField Spec="FormSchema.Office" />
+                <FormField Spec="FormSchema.Procedure" />
+            </div>
+
+            <h3>What is the request for?</h3>
+            <div class="kinds">
+                @foreach (var k in FormSchema.Kinds)
+                {
+                    <button type="button" class="kind @(Session.Kind?.Value == k.Value ? "on" : "")" @onclick="() => Session.ChooseRequestKind(k.Value)">
+                        <strong>@k.Title</strong>
+                        <span class="ar" dir="rtl" lang="ar">@k.Arabic</span>
+                        <small>@k.Description</small>
+                    </button>
+                }
+            </div>
+
+            @if (Session.ShowRequired && Session.Kind == null) { <small class="err">Choose what the request is for.</small> }
+            @if (Session.Kind is { } kind)
+            {
+                <div class="grid" @key="kind.Value">
+                    <FormField Spec="FormSchema.TypeSpec(kind)" />
+                </div>
+            }
+            break;
+
+        case 1:
+            <h1>@FormSchema.Applicant.Title</h1>
+            <p class="sub">@FormSchema.Applicant.Subtitle</p>
+            <div class="note">Tip: upload your passport in the panel on the right to fill this step automatically. It is optional.</div>
+            <div class="grid">
+                @foreach (var f in FormSchema.Applicant.Fields) { <FormField Spec="f" /> }
+            </div>
+            break;
+
+        case 2:
+            <h1>@FormSchema.Employer.Title</h1>
+            <p class="sub">@FormSchema.Employer.Subtitle</p>
+            <div class="note">Tip: if the sponsor is a person, upload the front and back of their civil ID in the panel on the right. Both are optional.</div>
+            <div class="grid">
+                @foreach (var f in FormSchema.Employer.Fields) { <FormField Spec="f" /> }
+            </div>
+            break;
+
+        case 3:
+            <h1>@FormSchema.Transferor.Title</h1>
+            <p class="sub">@FormSchema.Transferor.Subtitle</p>
+            @if (IsTransfer)
+            {
+                <div class="note ok">You chose <b>Transfer of sponsorship</b>, so please fill in the previous sponsor below.</div>
+            }
+            else
+            {
+                <div class="note">You can skip this step unless the sponsorship is being transferred from someone else.</div>
+            }
+            <div class="grid">
+                @foreach (var f in FormSchema.Transferor.Fields) { <FormField Spec="f" /> }
+            </div>
+            break;
+
+        default:
+            <h1>Review &amp; download</h1>
+            <p class="sub">Check the preview, then download your PDF.</p>
+
+            @if (Session.AllIssues() is { Count: > 0 } missing)
+            {
+                <div class="note warn"><b>Not filled in yet:</b> @string.Join(", ", missing). You can still download and complete these by hand.</div>
+            }
+            @if (error != null) { <div class="note err">@error</div> }
+
+            <div class="review">
+                <div class="summary">
+                    @Summary("Request", RequestRows())
+                    @Summary(FormSchema.Applicant.Title, FormSchema.Applicant.Fields)
+                    @Summary(FormSchema.Employer.Title, FormSchema.Employer.Fields)
+                    @Summary(FormSchema.Transferor.Title, FormSchema.Transferor.Fields)
+                </div>
+                <div class="previewbox">
+                    @if (busy) { <div class="spinner">Preparing preview…</div> }
+                    <iframe id="preview" class="preview" title="Preview of the filled form"></iframe>
+                </div>
+            </div>
+
+            <div class="downloads">
+                <button type="button" class="btn primary" disabled="@(busy || Session.AllIssues().Count > 0)" @onclick="() => Download(false)">⬇ Download editable PDF</button>
+                <button type="button" class="btn" disabled="@(busy || Session.AllIssues().Count > 0)" @onclick="() => Download(true)">🖨 Download print-ready PDF</button>
+            </div>
+            <div class="note">
+                <b>Editable PDF:</b> every box stays a live form field. Open it in Adobe Acrobat to see Arabic text drawn correctly;
+                some browsers and phone viewers may show Arabic unjoined or blank.<br />
+                <b>Print-ready PDF:</b> looks the same in every viewer (this is the preview above) but the boxes can no longer be edited.
+            </div>
+            break;
+    }
+</section>
+</fieldset>
+
+@if (Session.IsBusy)
+{
+    <div class="lock-overlay" role="status" aria-live="polite">
+        <span class="spinner-ring" aria-hidden="true"></span>
+        <span>Reading your document… the form is locked until it's done.</span>
+    </div>
+}
+</div>
+
+@if (DocumentsForStep.Count > 0)
+{
+    <aside class="docs-panel" aria-label="Documents">
+        <div>
+            <h3>Documents <span class="badge">Optional</span></h3>
+            <p class="hint">@PanelHint</p>
+        </div>
+        @foreach (var kind in DocumentsForStep)
+        {
+            <DocumentSlot @key="kind" Kind="kind" />
+        }
+    </aside>
+}
+</div>
+
+<div class="actions">
+    <button type="button" class="btn ghost" disabled="@(Session.IsBusy || Session.Step == FormSchema.RequestStep)" @onclick="() => Session.GoTo(Session.Step - 1)">← Back</button>
+    @if (Session.Step < FormSchema.ReviewStep)
+    {
+        <button type="button" class="btn primary" disabled="@Session.IsBusy" @onclick="() => Session.GoTo(Session.Step + 1)">@(Session.Step == FormSchema.TransferorStep ? "Review →" : "Next →")</button>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<DocumentKind> DocumentsForStep => Session.Step switch
+    {
+        FormSchema.ApplicantStep => new[] { DocumentKind.Passport },
+        FormSchema.EmployerStep => new[] { DocumentKind.CivilIdFront, DocumentKind.CivilIdBack },
+        _ => Array.Empty<DocumentKind>()
+    };
+
+    private string PanelHint => Session.Step == FormSchema.ApplicantStep
+        ? "Upload your passport to fill this step. You can skip it and type everything instead."
+        : "Upload the sponsor's civil ID (front, back, or both) to fill this step. You can skip it and type everything instead.";
+
+    private byte[]? flatBytes;
+    private bool previewPending, busy;
+    private string? error;
+
+    private bool IsTransfer => Session.Get(FieldNames.Procedure)?.Trim() == FormSchema.TransferOfSponsorshipProcedure;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnChanged;
+        Session.StepChanged += OnStepChanged;
+        if (Session.Step == FormSchema.ReviewStep) _ = BuildPreview();
+    }
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnStepChanged() => _ = InvokeAsync(async () =>
+    {
+        error = null;
+        if (Session.Step == FormSchema.ReviewStep) await BuildPreview();
+        StateHasChanged();
+    });
+
+    public void Dispose() { Session.Changed -= OnChanged; Session.StepChanged -= OnStepChanged; }
+
+    private async Task BuildPreview()
+    {
+        busy = true; StateHasChanged();
+        try { flatBytes = await Task.Run(() => DocumentWriter.CreatePrintReady(Session.Answers)); previewPending = true; }
+        catch (Exception ex) { error = ex.Message; }
+        busy = false;
+    }
+
+    private async Task Download(bool flat)
+    {
+        try
+        {
+            error = null;
+            var bytes = flat ? flatBytes ?? await Task.Run(() => DocumentWriter.CreatePrintReady(Session.Answers))
+                             : await Task.Run(() => DocumentWriter.CreateEditable(Session.Answers));
+            using var ms = new MemoryStream(bytes);
+            using var reference = new DotNetStreamReference(ms);
+            await JS.InvokeVoidAsync("downloadFileFromStream", flat ? "residence-request-print.pdf" : "residence-request-editable.pdf", reference);
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (previewPending && flatBytes != null && Session.Step == FormSchema.ReviewStep)
+        {
+            previewPending = false;
+            using var ms = new MemoryStream(flatBytes);
+            using var reference = new DotNetStreamReference(ms);
+            await JS.InvokeVoidAsync("showPdf", "preview", reference);
+        }
+    }
+
+    // ---- review helpers
+    private IEnumerable<FieldSpec> RequestRows()
+    {
+        yield return FormSchema.Office;
+        yield return FormSchema.Procedure;
+        yield return new FieldSpec(FieldNames.RequestKind, "Request for", FieldType.Text);
+        if (Session.Kind is { } k) yield return FormSchema.TypeSpec(k);
+    }
+
+    private RenderFragment Summary(string title, IEnumerable<FieldSpec> specs) => @<div class="group">
+        <h4>@title</h4>
+        @foreach (var s in specs)
+        {
+            var v = Session.Get(s.Pdf);
+            <div class="row @(string.IsNullOrWhiteSpace(v) ? "empty" : "")">
+                <span class="k">@s.Label</span>
+                <span class="v">
+                    @if (string.IsNullOrWhiteSpace(v)) { <text>—</text> }
+                    else if (s.Pdf == FieldNames.RequestKind) { <text>@Session.Kind?.Title <span class="ar" dir="rtl" lang="ar">@Session.Kind?.Arabic</span></text> }
+                    else if (s.Type == FieldType.Choice && Options.Find(s.Pdf, v) is { } it)
+                    {
+                        <text>@it.Label</text>@if (it.English != null) { <span class="ar" dir="rtl" lang="ar">@it.Arabic</span> }
+                    }
+                    else { <span dir="auto">@v</span> }
+                </span>
+            </div>
+        }
+    </div>;
+}

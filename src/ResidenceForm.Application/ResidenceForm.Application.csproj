@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ResidenceForm.Domain\ResidenceForm.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DI / logging abstractions only; no web code is used here -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ResidenceForm.Application\ResidenceForm.Application.csproj" />
+    <ProjectReference Include="..\ResidenceForm.Infrastructure\ResidenceForm.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Native OCR libraries are copied to the output of the project that references the package. Infrastructure uses them, but the
+         startup project references them too so Tesseract's and ONNX Runtime's native files are always next to the running app. -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the blank PDF, fonts, OCR models and translations travel with the app -->
+    <None Update="Assets\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Update="Assets\translations.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

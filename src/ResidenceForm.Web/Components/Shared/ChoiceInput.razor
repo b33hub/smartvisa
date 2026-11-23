@@ -1,0 +1,46 @@
+@* Picks the best control for the number of options: buttons (few), a native select (some), a searchable list (many).
+   It is a pure function of its parameters, so it redraws whenever the value changes from outside (e.g. a passport auto-fill). *@
+
+@if (Items.Count <= SegmentedMaxOptions)
+{
+    <div class="seg" role="radiogroup">
+        @foreach (var item in Items)
+        {
+            <button type="button" role="radio" aria-checked="@(Value == item.Raw)" class="@(Value == item.Raw ? "on" : "")" @onclick="() => Choose(item.Raw)">
+                @item.Label <small dir="rtl" lang="ar">@item.Arabic</small>
+            </button>
+        }
+    </div>
+}
+else if (Items.Count <= SelectMaxOptions)
+{
+    <select id="@Id" @onchange="OnSelect">
+        <option value="">Select…</option>
+        @foreach (var item in Items)
+        {
+            <option value="@item.Raw" selected="@(Value == item.Raw)">@item.Display</option>
+        }
+    </select>
+}
+else
+{
+    <SearchSelect Id="@Id" Items="Items" Value="@Value" ValueChanged="ValueChanged" Placeholder="Type to search in English or Arabic…" />
+}
+
+@code {
+    private const int SegmentedMaxOptions = 3;
+    private const int SelectMaxOptions = 12;
+
+    [Parameter, EditorRequired] public IReadOnlyList<DropdownOption> Items { get; set; } = [];
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string Id { get; set; } = "";
+
+    private Task Choose(string? raw) => ValueChanged.InvokeAsync(raw);
+
+    private Task OnSelect(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        return ValueChanged.InvokeAsync(string.IsNullOrEmpty(raw) ? null : raw);
+    }
+}

@@ -1,0 +1,46 @@
+@inject FormSession Session
+@inject IDropdownCatalog Options
+
+@{
+    var missing = Session.ShowRequired && Spec.Required && string.IsNullOrWhiteSpace(Session.Get(Spec.Pdf));
+}
+
+<div class="field @(Spec.Wide ? "wide" : "") @(missing || Error != null ? "invalid" : "")">
+    <label for="@Id">
+        @Spec.Label
+        @if (Spec.Required) { <span class="req" title="Required">*</span> }
+        @if (Spec.Arabic) { <span class="badge" title="This box is normally written in Arabic">Arabic</span> }
+    </label>
+
+    @switch (Spec.Type)
+    {
+        case FieldType.Choice:
+            <ChoiceInput Id="@Id" Items="Options.For(Spec.Pdf)" Value="@Session.Get(Spec.Pdf)" ValueChanged="OnChoice" />
+            break;
+        case FieldType.Date:
+            <input id="@Id" type="date" value="@Session.GetDateForPicker(Spec.Pdf)" @onchange="OnDate" />
+            break;
+        default:
+            <input id="@Id" type="@InputType" inputmode="@InputMode" dir="@(Spec.Arabic ? "auto" : null)"
+                   placeholder="@Spec.Hint" maxlength="@(Spec.Len > 0 ? Spec.Len : null)"
+                   value="@Session.Get(Spec.Pdf)" @onchange="OnText" />
+            break;
+    }
+
+    @if (Error is { } err) { <small class="err">@err</small> }
+    else if (missing) { <small class="err">This field is required</small> }
+    else if (Spec.Hint != null && Spec.Type == FieldType.Choice) { <small class="hint">@Spec.Hint</small> }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FieldSpec Spec { get; set; } = default!;
+
+    private string Id => $"f{(uint)Spec.Pdf.GetHashCode():x}";
+    private string InputType => Spec.Type switch { FieldType.Email => "email", _ => "text" };
+    private string? InputMode => Spec.Type switch { FieldType.Digits => "numeric", FieldType.Number => "decimal", _ => null };
+    private string? Error => FormSchema.Check(Spec, Session.Get(Spec.Pdf));
+
+    private void OnChoice(string? raw) => Session.Set(Spec.Pdf, raw);
+    private void OnText(ChangeEventArgs e) => Session.Set(Spec.Pdf, e.Value?.ToString()?.Trim());
+    private void OnDate(ChangeEventArgs e) => Session.SetDateFromPicker(Spec.Pdf, e.Value?.ToString());
+}

@@ -1,0 +1,88 @@
+@inject IJSRuntime JS
+
+<div class="ss @(open ? "open" : "")">
+    <div class="ss-control">
+        <input id="@Id" class="ss-input" type="text" autocomplete="off" role="combobox" aria-expanded="@open"
+               placeholder="@(open && selected != null ? SelectedText : Placeholder)"
+               value="@(open ? query : SelectedText)"
+               @oninput="OnInput" @onfocus="Open" @onblur="Close" @onkeydown="OnKey" />
+        @if (selected != null && !open)
+        {
+            <button type="button" class="ss-clear" aria-label="Clear selection" @onmousedown="Clear" @onmousedown:preventDefault>×</button>
+        }
+        <span class="ss-caret" aria-hidden="true">▾</span>
+    </div>
+
+    @if (open)
+    {
+        <ul class="ss-list" role="listbox">
+            @if (filtered.Count == 0)
+            {
+                <li class="ss-empty">No match. Try English or Arabic, or part of a name.</li>
+            }
+            @for (int i = 0; i < filtered.Count; i++)
+            {
+                var it = filtered[i];
+                <li id="@($"{Id}-opt-{i}")" role="option"
+                    class="@(i == active ? "active" : "") @(it.Raw == Value ? "selected" : "")"
+                    @onmousedown="() => Select(it)" @onmousedown:preventDefault>
+                    <span class="en">@it.Label</span>
+                    @if (it.English != null) { <span class="ar" dir="rtl" lang="ar">@it.Arabic</span> }
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<DropdownOption> Items { get; set; } = [];
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string Id { get; set; } = "";
+    [Parameter] public string Placeholder { get; set; } = "Type to search…";
+
+    private bool open, scroll;
+    private string query = "";
+    private int active;
+    private List<DropdownOption> filtered = new();
+
+    private DropdownOption? selected => Items.FirstOrDefault(i => i.Raw == Value);
+    private string SelectedText => selected?.Display ?? "";
+
+    private void Open()
+    {
+        if (open) return;
+        open = true; query = ""; filtered = Items.ToList();
+        active = Math.Max(0, filtered.FindIndex(i => i.Raw == Value));
+        scroll = true;
+    }
+
+    private void Close() => open = false;
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+        filtered = DropdownOption.Search(Items, query).ToList();
+        active = 0; scroll = true;
+    }
+
+    private async Task Select(DropdownOption it) { open = false; await ValueChanged.InvokeAsync(it.Raw); }
+    private async Task Clear() => await ValueChanged.InvokeAsync(null);
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowDown": if (!open) Open(); else active = Math.Min(filtered.Count - 1, active + 1); scroll = true; break;
+            case "ArrowUp":   active = Math.Max(0, active - 1); scroll = true; break;
+            case "Enter":     if (open && filtered.Count > 0) await Select(filtered[Math.Clamp(active, 0, filtered.Count - 1)]); break;
+            case "Escape":
+            case "Tab":       open = false; break;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (scroll && open) { scroll = false; await JS.InvokeVoidAsync("ssScroll", $"{Id}-opt-{active}"); }
+    }
+}

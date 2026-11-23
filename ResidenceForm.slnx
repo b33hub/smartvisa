@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ResidenceForm.Domain/ResidenceForm.Domain.csproj" />
+    <Project Path="src/ResidenceForm.Application/ResidenceForm.Application.csproj" />
+    <Project Path="src/ResidenceForm.Infrastructure/ResidenceForm.Infrastructure.csproj" />
+    <Project Path="src/ResidenceForm.Web/ResidenceForm.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ResidenceForm.Domain.Tests/ResidenceForm.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
