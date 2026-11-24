@@ -2,4 +2,10 @@ bin/
 obj/
 .vs/
 *.user
-TestResults/
+* text=auto
+*.onnx binary
+*.traineddata binary
+*.pdf binary
+*.ttf binary
+# the OCR character table must keep LF line endings
+src/ResidenceForm.Web/Assets/ocr/dict.txt text eol=lf

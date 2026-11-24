@@ -83,6 +83,10 @@ public static class PrintedZoneParser
             }
         }
 
+        // real layouts print each value directly under its label; this also works when there is no sex box to anchor on
+        place ??= PlaceBelowLabel(words);
+        issue ??= DateBelowLabel(words, "DATEOFISSUE");
+
         if (nat == null)                                                       // anchor missing: any country-like word on the page
             foreach (var w in words.Where(w => w.Key.Length is >= 5 and <= 24 && Regex.IsMatch(w.Text.Trim(), @"^[A-Z][A-Z .'-]{4,}$")
                                                && !w.Key.Contains("REPUBLIC") && !w.Key.Contains("PEOPLE")).OrderBy(w => w.Cy))
@@ -92,6 +96,33 @@ public static class PrintedZoneParser
             }
 
         return new PrintedValues(number, dob, issue, expiry, sex, place, nat, natText);
+    }
+
+    private static OcrWord? FindLabel(IReadOnlyList<OcrWord> words, string keyFragment) =>
+        words.FirstOrDefault(w => w.Key.Contains(keyFragment, StringComparison.Ordinal));      // bilingual labels keep only their English letters in Key
+
+    private static string? PlaceBelowLabel(IReadOnlyList<OcrWord> words)
+    {
+        var label = FindLabel(words, "PLACEOFBIRTH");
+        if (label is null) return null;
+
+        var value = words
+            .Where(w => w.Cy > label.Cy && Math.Abs(w.Cx - label.Cx) <= label.W && Regex.IsMatch(w.Text.Trim(), @"^[A-Za-z][A-Za-z .,'/-]{2,}$"))
+            .OrderBy(w => w.Cy)
+            .FirstOrDefault();
+        return value?.Text.Trim().ToUpperInvariant();
+    }
+
+    private static DateOnly? DateBelowLabel(IReadOnlyList<OcrWord> words, string keyFragment)
+    {
+        var label = FindLabel(words, keyFragment);
+        if (label is null) return null;
+
+        return words
+            .Where(w => w.Cy > label.Cy && Math.Abs(w.Cx - label.Cx) <= label.W)
+            .OrderBy(w => w.Cy)
+            .Select(w => Mrz.SingleDate(w.Text))
+            .FirstOrDefault(date => date is not null);
     }
 
     private static int Distance(string a, string b)

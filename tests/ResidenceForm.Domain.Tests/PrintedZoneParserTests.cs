@@ -50,4 +50,42 @@ public class PrintedZoneParserTests
 
         Assert.Equal("AA0000000", printed.Number);
     }
+
+    [Fact]
+    public void Place_of_birth_is_read_below_its_label_even_without_a_sex_box()
+    {
+        var words = new List<OcrWord>
+        {
+            new("/Place of Birth", 647, 1572, 905, 1606),
+            new("CUMILLA", 668, 1602, 831, 1639),
+        };
+
+        var printed = PrintedZoneParser.Parse(words, null, null, null, null, _countries);
+
+        Assert.Equal("CUMILLA", printed.Place);
+    }
+
+    [Fact]
+    public void Issue_date_is_read_below_its_label()
+    {
+        var words = new List<OcrWord>
+        {
+            new("Date of Issue", 490, 1740, 720, 1775),
+            new("14MAY 2024", 490, 1789, 720, 1827),
+        };
+
+        var printed = PrintedZoneParser.Parse(words, null, null, null, null, _countries);
+
+        Assert.Equal(new DateOnly(2024, 5, 14), printed.Issue);
+    }
+
+    [Fact]
+    public void Control_characters_in_recognised_text_do_not_break_dates()
+    {
+        // what the reader returned when its character table had CRLF line endings: a carriage return after every character
+        var word = new OcrWord("1\r4\rM\rA\rY\r 2\r0\r2\r4\r", 490, 1789, 720, 1827);
+
+        Assert.Equal("14MAY 2024", word.Text);
+        Assert.Equal(new DateOnly(2024, 5, 14), Mrz.SingleDate(word.Text));
+    }
 }

@@ -32,7 +32,7 @@ public sealed class PrintedTextOcr : IPrintedTextReader, IDisposable
 
     // PaddleOCR training used BGR channel order with these ImageNet statistics
     private static readonly float[] Mean = { 0.485f, 0.456f, 0.406f };
-    private static readonly float[] Std  = { 0.229f, 0.224f, 0.225f };
+    private static readonly float[] Std = { 0.229f, 0.224f, 0.225f };
 
     private bool EnsureLoaded()
     {
@@ -44,7 +44,11 @@ public sealed class PrintedTextOcr : IPrintedTextReader, IDisposable
             {
                 _det = new InferenceSession(Path.Combine(_modelDirectory, "det.onnx"));
                 _rec = new InferenceSession(Path.Combine(_modelDirectory, "rec.onnx"));
-                var chars = File.ReadAllText(Path.Combine(_modelDirectory, "dict.txt")).Split('\n');
+                // the recognition model carries its own character table; the file is a fallback and may have CRLF line endings
+                var table = _rec.ModelMetadata.CustomMetadataMap.TryGetValue("character", out var embedded)
+                    ? embedded
+                    : File.ReadAllText(Path.Combine(_modelDirectory, "dict.txt"));
+                var chars = table.Split('\n').Select(c => c.TrimEnd('\r')).ToArray();
                 _dict = new[] { "blank" }.Concat(chars).Concat(new[] { " " }).ToArray();       // CTC blank first, space last
                 return true;
             }
