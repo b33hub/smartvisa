@@ -144,4 +144,71 @@ public class CivilIdInterpreterTests
         Assert.Equal("1234567", data.PaciNumber.Value);
         Assert.Equal(Confidence.Check, data.PaciNumber.Confidence);
     }
+
+    // the back of a real Kuwaiti citizen's card, as the readers returned it (box positions from the raw reading)
+    private static CardScan RealBack() => new(new[]
+    {
+        Line("AB+", "فصيلة الدم: +8يم", 60),
+        Line("310041000019", "989 صهش32ظ2", 63),
+        Line("8:ah3l1", "القطعة: 8", 143),
+        Line("829", "شارع 829", 212),
+        Line("3", "3", 293),
+        Line("15686869", "الرقم الالى للعنوان: 15686869", 358),
+        Line("66638484:", "التليفون:66638484", 426),
+        Line("144212310041000019<<<", "", 646),
+        Line("1004108M2804109KWT15686869<<<5", "", 732),
+    });
+
+    [Fact]
+    public void The_real_back_gives_block_street_phone_and_a_confirmed_address_number()
+    {
+        var data = CreateInterpreter().InterpretBack(RealBack());
+
+        Assert.Equal("8", data.Block.Value);
+        Assert.Equal("829", data.Street.Value);
+        Assert.Equal("66638484", data.Phone.Value);
+        Assert.Equal("15686869", data.PaciNumber.Value);
+        Assert.Equal(Confidence.Good, data.PaciNumber.Confidence);       // the label and the code line agree
+        Assert.Equal(Confidence.Good, data.CivilId.Confidence);          // the number is repeated in the code lines
+    }
+
+    [Fact]
+    public void A_lone_number_between_the_street_and_the_address_number_is_the_plot_and_is_flagged()
+    {
+        var data = CreateInterpreter().InterpretBack(RealBack());
+
+        Assert.Equal("3", data.Building.Value);
+        Assert.Equal(Confidence.Check, data.Building.Confidence);
+    }
+
+    [Fact]
+    public void Profession_and_governorate_missing_from_a_citizens_card_are_not_reported_as_failures()
+    {
+        var data = CreateInterpreter().InterpretBack(RealBack());
+
+        Assert.False(data.Profession.HasValue);
+        Assert.False(data.Governorate.HasValue);
+        Assert.DoesNotContain(data.Notes, n => n.Contains("couldn't be read") && n.Contains("profession"));
+    }
+
+    [Fact]
+    public void The_address_number_is_taken_from_the_code_lines_when_its_label_is_unreadable()
+    {
+        var scan = new CardScan(new[] { Line("1004108M2804109KWT15686869<<<5", "", 732) });
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.Equal("15686869", data.PaciNumber.Value);
+        Assert.Equal(Confidence.Read, data.PaciNumber.Confidence);
+    }
+
+    [Fact]
+    public void A_code_line_with_failing_check_digits_does_not_supply_an_address_number()
+    {
+        var scan = new CardScan(new[] { Line("1004109M2804109KWT15686869<<<5", "", 732) });      // birth check digit 8 changed to 9
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.False(data.PaciNumber.HasValue);
+    }
 }

@@ -21,6 +21,8 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
     private const string PlotLabel = "قسيمه";
     private const string FloorLabel = "الدور";
     private const string UnitLabel = "الوحده";
+    private const string PhoneLabel = "التليفون";
+    private const string PhoneLabelAlternative = "الهاتف";
     private const string PaciLabel = "الرقم الالي";
     private const string SerialLabel = "المسلسل";
     private const string BloodTypeLabel = "فصيله";
@@ -30,7 +32,7 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
 
     // words that mark a line as something other than a governorate or area name
     private static readonly string[] KnownLabels =
-        { ProfessionLabel, StreetLabel, BlockLabel, PlotLabel, FloorLabel, UnitLabel, "الرقم", SerialLabel, BloodTypeLabel, "الدم", "بلوك" };
+        { ProfessionLabel, StreetLabel, BlockLabel, PlotLabel, FloorLabel, UnitLabel, "الرقم", SerialLabel, BloodTypeLabel, "الدم", "بلوك", PhoneLabel, PhoneLabelAlternative };
 
     private static readonly string[] GovernorateWords = { "محافظه", "محافطه", "المحافظه", "المحافطه", "المنطقه" };
 
@@ -102,7 +104,7 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
     // ------------------------------------------------------------------ back
 
     // labels that are followed by a number; every one of them also ends the previous label's value on the same line
-    private static readonly string[] NumberLabels = { BlockLabel, StreetLabel, PlotLabel, PaciLabel, FloorLabel, UnitLabel };
+    private static readonly string[] NumberLabels = { BlockLabel, StreetLabel, PlotLabel, PaciLabel, FloorLabel, UnitLabel, PhoneLabel, PhoneLabelAlternative };
 
     /// <param name="Inferred">Matched to its label by position because the Arabic reading lost the digits; the person must check it.</param>
     private sealed record LabelledNumber(string Label, string Value, bool Inferred);
@@ -114,19 +116,22 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
         data.SetRawReading(Describe(scan));
 
         var civilIdLine = FindCivilIdLine(scan.Lines);
-        data.CivilId = civilIdLine is null ? Finding.None : Read(CivilIdDigits(civilIdLine));
+        data.CivilId = civilIdLine is null ? Finding.None : ReadBackCivilId(scan.Lines, civilIdLine);
 
         var numbers = ReadLabelledNumbers(scan.Lines);
         data.Block = FromNumber(numbers, BlockLabel);
         data.Building = FromNumber(numbers, PlotLabel);              // the card's قسيمة value is the form's Building
+        if (!data.Building.HasValue) data.Building = FindUnlabelledPlot(scan.Lines);
         data.Street = FromNumber(numbers, StreetLabel);
         if (!data.Street.HasValue) data.Street = ReadAfterLabel(scan.Lines, StreetLabel);     // a street given by name instead of number
         data.PaciNumber = ReadPaciNumber(numbers, scan.Lines);
+        data.Phone = ReadPhone(numbers);
         data.Profession = ReadAfterLabel(scan.Lines, ProfessionLabel);
         ReadGovernorateAndArea(data, scan.Lines);
 
         if (!data.PaciNumber.HasValue) data.AddNote("The address PACI number (8 digits) couldn't be read. Please type it.");
-        if (!data.Profession.HasValue) data.AddNote("The profession couldn't be read. Please type it.");
+        if (!data.Profession.HasValue && !data.Governorate.HasValue && !data.Area.HasValue)
+            data.AddNote("Profession and governorate/area are not printed on every card. Type them yourself if you need them.");
         return data;
     }
 
@@ -205,19 +210,98 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
                 number.Inferred ? "matched to its label by position; please check" : null)
             : Finding.None;
 
+    private Finding ReadBackCivilId(IReadOnlyList<CardLine> lines, CardLine civilIdLine)
+    {
+        // the code lines repeat the civil ID; finding the same number there confirms the reading
+        var number = CivilIdDigits(civilIdLine);
+        var inCodeLines = lines.Any(l => l != civilIdLine && l.LatinKey.Contains(number, StringComparison.Ordinal));
+        return inCodeLines ? new Finding(number, number, Confidence.Good, "also found in the card's code lines") : Read(number);
+    }
+
     private static Finding ReadPaciNumber(Dictionary<string, LabelledNumber> numbers, IReadOnlyList<CardLine> lines)
     {
+        var fromCodeLines = FindPaciInCodeLines(lines);
+
         if (numbers.TryGetValue(PaciLabel, out var labelled))
         {
+            if (fromCodeLines == labelled.Value)
+            {
+                return new Finding(labelled.Value, labelled.Value, Confidence.Good, "confirmed by the card's code lines");
+            }
+
             var hasExpectedLength = labelled.Value.Length == PaciLength;
-            return new Finding(labelled.Value, labelled.Value,
-                hasExpectedLength && !labelled.Inferred ? Confidence.Read : Confidence.Check,
-                hasExpectedLength ? null : $"expected {PaciLength} digits, found {labelled.Value.Length}; please check");
+            var note = fromCodeLines is not null ? $"the code lines say {fromCodeLines}; please check"
+                     : hasExpectedLength ? null
+                     : $"expected {PaciLength} digits, found {labelled.Value.Length}; please check";
+            return new Finding(labelled.Value, labelled.Value, hasExpectedLength && !labelled.Inferred && note is null ? Confidence.Read : Confidence.Check, note);
         }
 
-        // no readable label: the only 8-digit number on the back is the address number
+        if (fromCodeLines is not null) return new Finding(fromCodeLines, fromCodeLines, Confidence.Read, "taken from the card's code lines");
+
+        // no readable label and no code line: the only 8-digit number on the back is the address number
         var eightDigits = lines.FirstOrDefault(l => l.Digits.Length == PaciLength);
         return eightDigits is null ? Finding.None : Read(eightDigits.Digits);
+    }
+
+    /// <summary>
+    /// The card's second code line ends with the address number in its optional field:
+    /// birth date, check digit, sex, expiry date, check digit, nationality, 11 optional characters, check digit.
+    /// </summary>
+    private static string? FindPaciInCodeLines(IReadOnlyList<CardLine> lines)
+    {
+        foreach (var line in lines)
+        {
+            var text = NonCodeLineCharacterRegex().Replace(line.Latin.ToUpperInvariant(), "");
+            var match = SecondCodeLineRegex().Match(text);
+            if (!match.Success) continue;
+
+            var birthChecked = Mrz.Check(match.Groups[1].Value) == match.Groups[2].Value[0] - '0';
+            var expiryChecked = Mrz.Check(match.Groups[4].Value) == match.Groups[5].Value[0] - '0';
+            var optional = match.Groups[7].Value.Trim('<');
+
+            // only trust a code line whose own check digits pass, so a misread line can't supply a wrong address number
+            if (birthChecked && expiryChecked && optional.Length == PaciLength && optional.All(char.IsAsciiDigit)) return optional;
+        }
+        return null;
+    }
+
+    private static Finding ReadPhone(Dictionary<string, LabelledNumber> numbers)
+    {
+        var found = numbers.GetValueOrDefault(PhoneLabel) ?? numbers.GetValueOrDefault(PhoneLabelAlternative);
+        if (found is null) return Finding.None;
+
+        const int expectedLength = 8;
+        var hasExpectedLength = found.Value.Length == expectedLength;
+        return new Finding(found.Value, found.Value, hasExpectedLength ? Confidence.Read : Confidence.Check,
+            hasExpectedLength ? null : $"expected {expectedLength} digits, found {found.Value.Length}; please check");
+    }
+
+    /// <summary>
+    /// Some cards print the plot (قسيمة) value as a lone number with no label box beside it. It sits between the street line and the
+    /// address-number line, so it is found by position and always marked for checking.
+    /// </summary>
+    private static Finding FindUnlabelledPlot(IReadOnlyList<CardLine> lines)
+    {
+        var street = lines.FirstOrDefault(l => ArabicText.ContainsLabel(l.Arabic, StreetLabel));
+        var paci = lines.FirstOrDefault(l => ArabicText.ContainsLabel(l.Arabic, PaciLabel));
+        if (street is null || paci is null) return Finding.None;          // without both anchors, position says nothing
+
+        var lone = lines
+            .Where(l => l.Box.Cy > street.Box.Cy && l.Box.Cy < paci.Box.Cy)
+            .Select(l => LoneSmallNumber(l))
+            .FirstOrDefault(number => number is not null);
+        return lone is null
+            ? Finding.None
+            : new Finding(lone, lone, Confidence.Check, "no label was read beside this number; taken as the plot (قسيمة) value by position");
+    }
+
+    private static string? LoneSmallNumber(CardLine line)
+    {
+        foreach (var text in new[] { ArabicText.Normalise(line.Arabic), line.Latin.Trim() })
+        {
+            if (text.Length is >= 1 and <= 3 && text.All(char.IsAsciiDigit)) return text;
+        }
+        return null;
     }
 
     private static IEnumerable<string> Describe(CardScan scan) =>
@@ -299,6 +383,12 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
 
     [GeneratedRegex(@"\d+")]
     private static partial Regex LatinNumberRegex();
+
+    [GeneratedRegex("[^A-Z0-9<]")]
+    private static partial Regex NonCodeLineCharacterRegex();
+
+    [GeneratedRegex(@"(\d{6})(\d)([MF<])(\d{6})(\d)([A-Z]{3})([A-Z0-9<]{11})(\d)")]
+    private static partial Regex SecondCodeLineRegex();
 
     [GeneratedRegex(@"\s*-\s*\d+\s*$")]
     private static partial Regex OptionNumberSuffixRegex();

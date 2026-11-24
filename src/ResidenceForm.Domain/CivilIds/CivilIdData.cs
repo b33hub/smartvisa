@@ -23,6 +23,7 @@ public sealed class CivilIdData(CivilIdSide side) : IDocumentReading
     public Finding Street { get; internal set; } = Finding.None;
     public Finding Building { get; internal set; } = Finding.None;      // the value printed after قسيمة (plot)
     public Finding PaciNumber { get; internal set; } = Finding.None;
+    public Finding Phone { get; internal set; } = Finding.None;
 
     private readonly List<string> _notes = new();
 
@@ -54,5 +55,6 @@ public sealed class CivilIdData(CivilIdSide side) : IDocumentReading
         yield return (FieldNames.EmployerStreet, "Street", Street);
         yield return (FieldNames.EmployerBuilding, "Building", Building);
         yield return (FieldNames.EmployerAddressPaci, "Address PACI number", PaciNumber);
+        yield return (FieldNames.EmployerPhone, "Phone", Phone);
     }
 }
