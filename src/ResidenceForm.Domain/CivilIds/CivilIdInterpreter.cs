@@ -40,6 +40,7 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
     {
         var data = new CivilIdData(CivilIdSide.Front);
         AddScanProblem(data, scan);
+        data.SetRawReading(Describe(scan));
 
         var civilIdLine = FindCivilIdLine(scan.Lines);
         data.CivilId = civilIdLine is null ? Finding.None : Read(CivilIdDigits(civilIdLine));
@@ -100,18 +101,28 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
 
     // ------------------------------------------------------------------ back
 
+    // labels that are followed by a number; every one of them also ends the previous label's value on the same line
+    private static readonly string[] NumberLabels = { BlockLabel, StreetLabel, PlotLabel, PaciLabel, FloorLabel, UnitLabel };
+
+    /// <param name="Inferred">Matched to its label by position because the Arabic reading lost the digits; the person must check it.</param>
+    private sealed record LabelledNumber(string Label, string Value, bool Inferred);
+
     public CivilIdData InterpretBack(CardScan scan)
     {
         var data = new CivilIdData(CivilIdSide.Back);
         AddScanProblem(data, scan);
+        data.SetRawReading(Describe(scan));
 
         var civilIdLine = FindCivilIdLine(scan.Lines);
         data.CivilId = civilIdLine is null ? Finding.None : Read(CivilIdDigits(civilIdLine));
 
+        var numbers = ReadLabelledNumbers(scan.Lines);
+        data.Block = FromNumber(numbers, BlockLabel);
+        data.Building = FromNumber(numbers, PlotLabel);              // the card's قسيمة value is the form's Building
+        data.Street = FromNumber(numbers, StreetLabel);
+        if (!data.Street.HasValue) data.Street = ReadAfterLabel(scan.Lines, StreetLabel);     // a street given by name instead of number
+        data.PaciNumber = ReadPaciNumber(numbers, scan.Lines);
         data.Profession = ReadAfterLabel(scan.Lines, ProfessionLabel);
-        data.Street = ReadAfterLabel(scan.Lines, StreetLabel);
-        data.Block = ReadNumberAfterLabel(scan.Lines, BlockLabel);
-        data.PaciNumber = ReadPaciNumber(scan.Lines);
         ReadGovernorateAndArea(data, scan.Lines);
 
         if (!data.PaciNumber.HasValue) data.AddNote("The address PACI number (8 digits) couldn't be read. Please type it.");
@@ -119,35 +130,98 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
         return data;
     }
 
+    /// <summary>The text after the label (letters only; numbers are read by <see cref="ReadLabelledNumbers"/>).</summary>
     private static Finding ReadAfterLabel(IReadOnlyList<CardLine> lines, string label)
     {
         foreach (var line in lines)
         {
             var value = ArabicText.AfterLabel(line.Arabic, label);
-            if (!string.IsNullOrWhiteSpace(value)) return Read(DigitsAndPunctuationRegex().Replace(value, " ").Trim(), "taken from the card; check every letter");
+            if (value is null) continue;
+
+            var cleaned = DigitsAndPunctuationRegex().Replace(value, " ").Trim();
+            if (cleaned.Length > 0) return Read(cleaned, "taken from the card; check every letter");
         }
         return Finding.None;
     }
 
-    private static Finding ReadNumberAfterLabel(IReadOnlyList<CardLine> lines, string label)
+    /// <summary>
+    /// Each label is paired with the number that follows it, so labels sharing one printed line (القطعة and شارع) are read separately.
+    /// A line's first reading of a label wins, but a direct reading beats one inferred from position.
+    /// </summary>
+    private static Dictionary<string, LabelledNumber> ReadLabelledNumbers(IReadOnlyList<CardLine> lines)
     {
-        foreach (var line in lines.Where(l => ArabicText.ContainsLabel(l.Arabic, label)))
+        var result = new Dictionary<string, LabelledNumber>();
+        foreach (var number in lines.SelectMany(ReadNumbersInLine))
         {
-            // digits come from the Latin reader when it found any, otherwise from the Arabic reading
-            var digits = line.Digits.Length > 0 ? line.Digits : NonDigitRegex().Replace(ArabicText.Normalise(line.Arabic), "");
-            if (digits.Length > 0) return Read(digits);
+            if (!result.TryGetValue(number.Label, out var existing) || (existing.Inferred && !number.Inferred))
+            {
+                result[number.Label] = number;
+            }
         }
-        return Finding.None;
+        return result;
     }
 
-    private Finding ReadPaciNumber(IReadOnlyList<CardLine> lines)
+    private static IEnumerable<LabelledNumber> ReadNumbersInLine(CardLine line)
     {
-        // the automated address number is the only 8-digit number on the back; prefer the line that carries its label
-        var eightDigits = lines.Where(l => l.Digits.Length == PaciLength).ToList();
-        var labelled = eightDigits.FirstOrDefault(l => ArabicText.ContainsLabel(l.Arabic, PaciLabel));
-        var chosen = labelled ?? eightDigits.FirstOrDefault();
-        return chosen is null ? Finding.None : Read(chosen.Digits);
+        var labels = ArabicText.FindLabels(line.Arabic, NumberLabels);
+        if (labels.Count == 0) yield break;
+
+        var tokens = ArabicText.Words(line.Arabic).Select(ArabicText.Normalise).ToArray();
+        var unresolved = new List<string>();
+
+        for (var i = 0; i < labels.Count; i++)
+        {
+            var start = labels[i].Index + labels[i].WordCount;
+            var end = i + 1 < labels.Count ? labels[i + 1].Index : tokens.Length;
+            var number = tokens.Skip(start).Take(Math.Max(0, end - start)).FirstOrDefault(IsNumber);
+
+            if (number is not null) yield return new LabelledNumber(labels[i].Label, number, Inferred: false);
+            else unresolved.Add(labels[i].Label);
+        }
+
+        // the Arabic reading lost some digits: use the Latin reading's numbers when they can only belong to the unresolved labels
+        var latin = LatinNumberRegex().Matches(line.Latin).Select(m => m.Value).ToList();
+        if (unresolved.Count == 0 || latin.Count != unresolved.Count) yield break;
+
+        if (unresolved.Count == 1)
+        {
+            yield return new LabelledNumber(unresolved[0], latin[0], Inferred: false);
+            yield break;
+        }
+
+        // an Arabic line is read right to left, but the Latin reader lists its numbers left to right, so pair them in reverse
+        latin.Reverse();
+        for (var i = 0; i < unresolved.Count; i++)
+        {
+            yield return new LabelledNumber(unresolved[i], latin[i], Inferred: true);
+        }
     }
+
+    private static bool IsNumber(string token) => token.Length > 0 && token.All(char.IsAsciiDigit);
+
+    private static Finding FromNumber(Dictionary<string, LabelledNumber> numbers, string label) =>
+        numbers.TryGetValue(label, out var number)
+            ? new Finding(number.Value, number.Value, number.Inferred ? Confidence.Check : Confidence.Read,
+                number.Inferred ? "matched to its label by position; please check" : null)
+            : Finding.None;
+
+    private static Finding ReadPaciNumber(Dictionary<string, LabelledNumber> numbers, IReadOnlyList<CardLine> lines)
+    {
+        if (numbers.TryGetValue(PaciLabel, out var labelled))
+        {
+            var hasExpectedLength = labelled.Value.Length == PaciLength;
+            return new Finding(labelled.Value, labelled.Value,
+                hasExpectedLength && !labelled.Inferred ? Confidence.Read : Confidence.Check,
+                hasExpectedLength ? null : $"expected {PaciLength} digits, found {labelled.Value.Length}; please check");
+        }
+
+        // no readable label: the only 8-digit number on the back is the address number
+        var eightDigits = lines.FirstOrDefault(l => l.Digits.Length == PaciLength);
+        return eightDigits is null ? Finding.None : Read(eightDigits.Digits);
+    }
+
+    private static IEnumerable<string> Describe(CardScan scan) =>
+        scan.Lines.Select((l, i) => $"[{i}] y={l.Box.Y1:0}-{l.Box.Y2:0} x={l.Box.X1:0}-{l.Box.X2:0} | latin: {l.Latin} | arabic: {l.Arabic}");
 
     private void ReadGovernorateAndArea(CivilIdData data, IReadOnlyList<CardLine> lines)
     {
@@ -223,8 +297,8 @@ public sealed partial class CivilIdInterpreter(CountryResolver countries, IDropd
     [GeneratedRegex(@"[\d\p{P}\p{S}]+")]
     private static partial Regex DigitsAndPunctuationRegex();
 
-    [GeneratedRegex(@"\D")]
-    private static partial Regex NonDigitRegex();
+    [GeneratedRegex(@"\d+")]
+    private static partial Regex LatinNumberRegex();
 
     [GeneratedRegex(@"\s*-\s*\d+\s*$")]
     private static partial Regex OptionNumberSuffixRegex();

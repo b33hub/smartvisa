@@ -8,9 +8,9 @@ public static class Mrz
     private static readonly int[] W = { 7, 3, 1 };
 
     private static readonly Dictionary<char, char> ToDigit = new()
-        { ['O'] = '0', ['Q'] = '0', ['D'] = '0', ['I'] = '1', ['L'] = '1', ['Z'] = '2', ['S'] = '5', ['B'] = '8', ['G'] = '6' };
+    { ['O'] = '0', ['Q'] = '0', ['D'] = '0', ['I'] = '1', ['L'] = '1', ['Z'] = '2', ['S'] = '5', ['B'] = '8', ['G'] = '6' };
     private static readonly Dictionary<char, char> ToAlpha = new()
-        { ['0'] = 'O', ['1'] = 'I', ['5'] = 'S', ['8'] = 'B', ['2'] = 'Z', ['6'] = 'G' };
+    { ['0'] = 'O', ['1'] = 'I', ['5'] = 'S', ['8'] = 'B', ['2'] = 'Z', ['6'] = 'G' };
 
     public static int Value(char c) => c == '<' ? 0 : char.IsAsciiDigit(c) ? c - '0' : c is >= 'A' and <= 'Z' ? c - 'A' + 10 : 0;
 
@@ -22,7 +22,7 @@ public static class Mrz
     }
 
     private static string FixDigits(string s) => new(s.Select(c => ToDigit.GetValueOrDefault(c, c)).ToArray());
-    private static string FixAlpha(string s)  => new(s.Select(c => ToAlpha.GetValueOrDefault(c, c)).ToArray());
+    private static string FixAlpha(string s) => new(s.Select(c => ToAlpha.GetValueOrDefault(c, c)).ToArray());
 
     private static bool ValidDate(string s) =>
         s.Length == 6 && s.All(char.IsAsciiDigit) && int.Parse(s[2..4]) is >= 1 and <= 12 && int.Parse(s[4..6]) is >= 1 and <= 31;
@@ -92,7 +92,7 @@ public static class Mrz
         l = l.Replace(" ", "");
         if (l.Length == 44) yield return l;
         else if (l.Length > 44) for (int i = 0; i + 44 <= l.Length; i++) yield return l.Substring(i, 44);
-        else if (l.Length >= 38) for (int p = 26; p < 43; p++) yield return l[..p] + new string('<', 44 - l.Length) + l[p..];
+        else if (l.Length >= 38) for (int p = 26; p <= Math.Min(42, l.Length); p++) yield return l[..p] + new string('<', 44 - l.Length) + l[p..];
 
         if (country != null)                                          // anchor on the country code taken from line 1
             for (int j = 6; j < 15 && j + 3 <= l.Length; j++)
@@ -165,7 +165,7 @@ public static class Mrz
     }
 
     private static readonly Regex TextDate = new(@"(?<!\d)(\d{1,2})\s*([A-Za-z]{3})[A-Za-z]*(?:\s*/\s*[A-Za-z]{3,})?\s*(\d{4})(?!\d)");
-    private static readonly Regex NumDate  = new(@"(?<!\d)(\d{2})[./-](\d{2})[./-](\d{4})(?!\d)");
+    private static readonly Regex NumDate = new(@"(?<!\d)(\d{2})[./-](\d{2})[./-](\d{4})(?!\d)");
 
     public static HashSet<DateOnly> VisualDates(string text)
     {

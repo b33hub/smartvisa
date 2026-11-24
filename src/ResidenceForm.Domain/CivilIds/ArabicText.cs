@@ -58,6 +58,27 @@ public static partial class ArabicText
     public static string RemoveWords(string line, params string[] normalisedWords) =>
         string.Join(' ', Words(line).Where(word => !normalisedWords.Contains(Normalise(word))));
 
+    /// <summary>Every occurrence of any of the labels (normalised form) in the line, in reading order.</summary>
+    public static IReadOnlyList<(string Label, int Index, int WordCount)> FindLabels(string line, IEnumerable<string> labels)
+    {
+        var words = Words(line);
+        var found = new List<(string Label, int Index, int WordCount)>();
+        foreach (var label in labels)
+        {
+            var labelWords = Words(label).Select(Normalise).ToArray();
+            for (var start = 0; start + labelWords.Length <= words.Length; start++)
+            {
+                var matches = true;
+                for (var offset = 0; offset < labelWords.Length && matches; offset++)
+                {
+                    matches = Normalise(words[start + offset]) == labelWords[offset];
+                }
+                if (matches) found.Add((label, start, labelWords.Length));
+            }
+        }
+        return found.OrderBy(f => f.Index).ToList();
+    }
+
     private static int IndexOfLabel(string[] words, string label)
     {
         var labelWords = Words(label).Select(Normalise).ToArray();

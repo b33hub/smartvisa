@@ -21,6 +21,7 @@ public sealed class CivilIdData(CivilIdSide side) : IDocumentReading
     public Finding Area { get; internal set; } = Finding.None;
     public Finding Block { get; internal set; } = Finding.None;
     public Finding Street { get; internal set; } = Finding.None;
+    public Finding Building { get; internal set; } = Finding.None;      // the value printed after قسيمة (plot)
     public Finding PaciNumber { get; internal set; } = Finding.None;
 
     private readonly List<string> _notes = new();
@@ -28,6 +29,12 @@ public sealed class CivilIdData(CivilIdSide side) : IDocumentReading
     public IReadOnlyList<string> Notes => _notes;
 
     internal void AddNote(string note) => _notes.Add(note);
+
+    private IReadOnlyList<string> _rawReading = Array.Empty<string>();
+
+    public IReadOnlyList<string> RawReading => _rawReading;
+
+    internal void SetRawReading(IEnumerable<string> lines) => _rawReading = lines.ToList();
 
     public IEnumerable<(string Field, string Label, Finding Finding)> FormMapping()
     {
@@ -45,6 +52,7 @@ public sealed class CivilIdData(CivilIdSide side) : IDocumentReading
         yield return (FieldNames.EmployerArea, "Area", Area);
         yield return (FieldNames.EmployerBlock, "Block", Block);
         yield return (FieldNames.EmployerStreet, "Street", Street);
+        yield return (FieldNames.EmployerBuilding, "Building", Building);
         yield return (FieldNames.EmployerAddressPaci, "Address PACI number", PaciNumber);
     }
 }

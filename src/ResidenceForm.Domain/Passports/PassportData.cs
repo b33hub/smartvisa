@@ -23,6 +23,12 @@ public sealed class PassportData : IDocumentReading
 
     internal void AddNote(string note) => _notes.Add(note);
 
+    private IReadOnlyList<string> _rawReading = Array.Empty<string>();
+
+    public IReadOnlyList<string> RawReading => _rawReading;
+
+    internal void SetRawReading(IEnumerable<string> lines) => _rawReading = lines.ToList();
+
     public IEnumerable<(string Field, string Label, Finding Finding)> FormMapping()
     {
         yield return (FieldNames.FullName, "Full name", FullName);

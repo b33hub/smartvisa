@@ -8,4 +8,7 @@ public interface IDocumentReading
 
     /// <summary>Things the person should know (what couldn't be read, what looks suspicious).</summary>
     IReadOnlyList<string> Notes { get; }
+
+    /// <summary>What the readers returned before interpretation (one line per text box); shown in development to tune the rules.</summary>
+    IReadOnlyList<string> RawReading { get; }
 }

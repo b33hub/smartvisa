@@ -1,4 +1,5 @@
 using ResidenceForm.Domain.CivilIds;
+using ResidenceForm.Domain.Documents;
 using ResidenceForm.Domain.Passports;
 
 namespace ResidenceForm.Domain.Tests;
@@ -97,5 +98,50 @@ public class CivilIdInterpreterTests
 
         Assert.NotEmpty(data.Notes);
         Assert.All(data.FormMapping(), mapping => Assert.False(mapping.Finding.HasValue));
+    }
+
+    [Fact]
+    public void Two_labels_on_one_line_are_read_separately()
+    {
+        var scan = new CardScan(new[] { Line("12 5", "القطعة : 5 شارع : 12", 380) });
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.Equal("5", data.Block.Value);
+        Assert.Equal("12", data.Street.Value);
+    }
+
+    [Fact]
+    public void The_street_is_a_number_and_the_plot_value_is_the_building()
+    {
+        var scan = new CardScan(new[] { Line("12 :", "شارع : 12", 330), Line("345 :", "قسيمة : 345", 430) });
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.Equal("12", data.Street.Value);
+        Assert.Equal("345", data.Building.Value);
+    }
+
+    [Fact]
+    public void When_the_arabic_reading_lost_the_digits_two_labels_are_paired_by_position_and_flagged()
+    {
+        var scan = new CardScan(new[] { Line("12 5", "القطعة شارع", 380) });
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.Equal("5", data.Block.Value);       // the card is read right to left, the Latin numbers left to right
+        Assert.Equal("12", data.Street.Value);
+        Assert.Equal(Confidence.Check, data.Block.Confidence);
+    }
+
+    [Fact]
+    public void A_paci_number_with_the_wrong_length_is_kept_but_flagged()
+    {
+        var scan = new CardScan(new[] { Line("1234567", "الرقم الآلي : 1234567", 480) });
+
+        var data = CreateInterpreter().InterpretBack(scan);
+
+        Assert.Equal("1234567", data.PaciNumber.Value);
+        Assert.Equal(Confidence.Check, data.PaciNumber.Confidence);
     }
 }

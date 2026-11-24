@@ -15,6 +15,8 @@ public sealed class PassportInterpreter(CountryResolver countries, IDropdownCata
     public PassportData Interpret(PassportScan scan)
     {
         var data = new PassportData();
+        data.SetRawReading((scan.PrintedWords ?? Array.Empty<OcrWord>()).Select(
+            (w, i) => $"[{i}] y={w.Y1:0}-{w.Y2:0} x={w.X1:0}-{w.X2:0} | {w.Text}"));
         var line1 = scan.CodeLines?.L1;
         var line2 = scan.CodeLines?.L2;
 

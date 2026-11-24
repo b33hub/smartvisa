@@ -2,6 +2,7 @@
 @inject ReadDocumentUseCase ReadDocument
 @inject IImagePreviewer Previewer
 @inject FormSession Session
+@inject IJSRuntime JS
 @inject Microsoft.Extensions.Logging.ILogger<DocumentSlot> Logger
 @inject Microsoft.Extensions.Hosting.IHostEnvironment Environment
 
@@ -55,34 +56,53 @@
                     {
                         <tr>
                             <th>@label</th>
-                            <td>@if (finding.HasValue) { <span dir="auto">@finding.Display</span> } else { <text>—</text> }</td>
-                            <td>@ConfidenceBadge(finding)</td>
-                            <td class="hint">@OutcomeText(document, field)</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-            @foreach (var note in document.Reading.Notes) { <div class="note warn">@note</div> }
+                            <td>@if (finding.HasValue) {
+                                <span dir="auto">@finding.Display</span>
+                            } else
+                            {
+
+                                <text>—</text>
+                            }
+                        </td>
+                        <td>@ConfidenceBadge(finding)</td>
+                        <td class="hint">@OutcomeText(document, field)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @foreach (var note in document.Reading.Notes)
+        {
+            <div class="note warn">@note</div>
+        }
+    </details>
+
+    @if (Environment.IsDevelopment() && document.Reading.RawReading.Count > 0)
+    {
+        <details class="doc-details doc-raw">
+            <summary>Raw reading (development only)</summary>
+            <button type="button" class="link" @onclick="() => CopyRawReading(document)">Copy to clipboard</button>
+            <pre>@string.Join("\n", document.Reading.RawReading)</pre>
         </details>
     }
+}
     else
-    {
-        <label class="pc-drop @(Session.IsBusy ? "busy" : "")">
-            <InputFile @key="inputKey" OnChange="OnFileSelected" accept="image/jpeg,image/png,image/webp,image/bmp" disabled="@Session.IsBusy" />
-            <span>Choose a photo, or drop it here<br /><small>JPG, PNG or WebP · max 8 MB</small></span>
-        </label>
-    }
+{
+    <label class="pc-drop @(Session.IsBusy ? "busy" : "")">
+        <InputFile @key="inputKey" OnChange="OnFileSelected" accept="image/jpeg,image/png,image/webp,image/bmp" disabled="@Session.IsBusy" />
+        <span>Choose a photo, or drop it here<br /><small>JPG, PNG or WebP · max 8 MB</small></span>
+    </label>
+}
 
-    @if (document.Error is not null)
-    {
-        <div class="note err">
-            @document.Error
-            @if (document.TechnicalDetail is not null)
-            {
-                <details><summary>Technical details (development only)</summary><code>@document.TechnicalDetail</code></details>
-            }
-        </div>
-    }
+@if (document.Error is not null)
+{
+    <div class="note err">
+        @document.Error
+        @if (document.TechnicalDetail is not null)
+        {
+            <details><summary>Technical details (development only)</summary><code>@document.TechnicalDetail</code></details>
+        }
+    </div>
+}
 </section>
 
 @code {
@@ -115,6 +135,9 @@
 
     public void Dispose() => Session.Changed -= OnSessionChanged;
 
+    private async Task CopyRawReading(UploadedDocument document) =>
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", $"{document.Kind}\n" + string.Join("\n", document.Reading!.RawReading));
+
     private void ToggleExpanded() => expanded = !expanded;
 
     private void Remove()
@@ -124,60 +147,59 @@
     }
 
     // Reads the file before the UI changes, because BeginReading removes the <InputFile> from the DOM
-private async Task OnFileSelected(InputFileChangeEventArgs e)
-{
-    var file = e.File;
-    if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
     {
-        Session.FailReading(Kind, "Please upload a JPG, PNG or WebP photo (PDF files aren't supported here).", null);
-        inputKey++;
-        return;
-    }
+        var file = e.File;
+        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            Session.FailReading(Kind, "Please upload a JPG, PNG or WebP photo (PDF files aren't supported here).", null);
+            inputKey++;
+            return;
+        }
 
-    byte[] imageBytes;
-    try
-    {
-        imageBytes = await ReadAllBytesAsync(file);   // must happen while the InputFile is still rendered
-    }
-    catch (IOException)
-    {
-        Session.FailReading(Kind, "That file is larger than 8 MB. Please upload a smaller photo.", null);
-        inputKey++;
-        return;
-    }
-    catch (Exception ex)
-    {
-        Logger.LogError(ex, "A {Kind} image could not be read from the browser", Kind);
-        Session.FailReading(Kind, "Sorry, that image couldn't be uploaded. Please try again.", null);
-        inputKey++;
-        return;
-    }
+        byte[] imageBytes;
+        try
+        {
+            imageBytes = await ReadAllBytesAsync(file);   // must happen while the InputFile is still rendered
+        }
+        catch (IOException)
+        {
+            Session.FailReading(Kind, "That file is larger than 8 MB. Please upload a smaller photo.", null);
+            inputKey++;
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "A {Kind} image could not be read from the browser", Kind);
+            Session.FailReading(Kind, "Sorry, that image couldn't be uploaded. Please try again.", null);
+            inputKey++;
+            return;
+        }
 
-    Session.BeginReading(Kind, file.Name);   // locks the form and shows the spinner; safe now that the bytes are in memory
-    try
-    {
-        var preview = await Task.Run(() => Previewer.CreateDataUrl(imageBytes));
-        var reading = await Task.Run(() => ReadDocument.Execute(Kind, imageBytes));
-        Session.CompleteReading(Kind, preview, reading);
+        Session.BeginReading(Kind, file.Name);   // locks the form and shows the spinner; safe now that the bytes are in memory
+        try
+        {
+            var preview = await Task.Run(() => Previewer.CreateDataUrl(imageBytes));
+            var reading = await Task.Run(() => ReadDocument.Execute(Kind, imageBytes));
+            Session.CompleteReading(Kind, preview, reading);
+        }
+        catch (InvalidDataException ex)
+        {
+            Session.FailReading(Kind, ex.Message, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "A {Kind} image could not be processed", Kind);
+            var detail = Environment.IsDevelopment()
+                ? $"{ex.GetType().Name}: {ex.Message}{(ex.InnerException is null ? "" : " (" + ex.InnerException.Message + ")")}"
+                : null;
+            Session.FailReading(Kind, "Sorry, that image couldn't be processed. You can still fill the boxes by hand.", detail);
+        }
+        finally
+        {
+            inputKey++;   // a fresh file input, so the same file can be chosen again
+        }
     }
-    catch (InvalidDataException ex)
-    {
-        Session.FailReading(Kind, ex.Message, null);
-    }
-    catch (Exception ex)
-    {
-        Logger.LogError(ex, "A {Kind} image could not be processed", Kind);
-        var detail = Environment.IsDevelopment()
-            ? $"{ex.GetType().Name}: {ex.Message}{(ex.InnerException is null ? "" : " (" + ex.InnerException.Message + ")")}"
-            : null;
-        Session.FailReading(Kind, "Sorry, that image couldn't be processed. You can still fill the boxes by hand.", detail);
-    }
-    finally
-    {
-        inputKey++;   // a fresh file input, so the same file can be chosen again
-    }
-}
-
 
     private static async Task<byte[]> ReadAllBytesAsync(IBrowserFile file)
     {
