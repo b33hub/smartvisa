@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+  <PropertyGroup>
+    <!-- Do not publish pre-compressed (.gz/.br) copies of the static assets. If IIS returns 200 with an empty body for CSS/JS,
+         this removes the compressed variants from the picture. Re-enable only if bandwidth matters and IIS serves them correctly. -->
+    <CompressionEnabled>false</CompressionEnabled>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ResidenceForm.Application\ResidenceForm.Application.csproj" />
     <ProjectReference Include="..\ResidenceForm.Infrastructure\ResidenceForm.Infrastructure.csproj" />

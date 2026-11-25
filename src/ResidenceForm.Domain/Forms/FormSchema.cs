@@ -67,7 +67,7 @@ public static class FormSchema
     public static readonly SectionSpec Employer = new("Employer / sponsor", "The person, company or authority sponsoring the applicant", new[]
     {
         new FieldSpec(FieldNames.EmployerCivilId, "Civil ID", FieldType.Digits, "12 digits", Len: 12, Required: true),
-        new FieldSpec(FieldNames.EmployerReferenceNumber, "Reference / legal entity no.", FieldType.Digits, Required: true),
+        new FieldSpec(FieldNames.EmployerReferenceNumber, "Reference / legal entity no.", FieldType.Digits, Required: false),
         new FieldSpec(FieldNames.EmployerName, "Name / authority / company", Arabic: true, Wide: true, Hint: "Copy from the company licence or civil ID", Required: true),
         new FieldSpec(FieldNames.EmployerEmail, "Email", FieldType.Email, Required: true),
         new FieldSpec(FieldNames.EmployerAddressPaci, "Address PACI number", FieldType.Digits, "8 digits", Len: 8, Required: true),
