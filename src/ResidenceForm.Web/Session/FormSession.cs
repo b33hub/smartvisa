@@ -12,7 +12,10 @@ public sealed class FormSession
     private readonly Dictionary<DocumentKind, UploadedDocument> _documents =
         Enum.GetValues<DocumentKind>().ToDictionary(kind => kind, kind => new UploadedDocument(kind));
 
-    public FormAnswers Answers { get; } = new();
+    public ApplicationBatch Batch { get; } = new();
+
+    /// <summary>The application being filled in now; the employer's shared answers live here too.</summary>
+    public FormAnswers Answers => Batch.Current;
 
     public int Step { get; private set; }
 
@@ -91,9 +94,53 @@ public sealed class FormSession
         Changed?.Invoke();
     }
 
-    public IReadOnlyList<string> Issues(int step) => Answers.Issues(step);
+    public IReadOnlyList<string> Issues(int step)
+    {
+        // after "Add another application" the new application starts blank; leaving it blank means "no more applications"
+        var isApplicationStep = step is FormSchema.RequestStep or FormSchema.ApplicantStep;
+        return isApplicationStep && Batch.Saved.Count > 0 && Batch.CurrentIsBlank ? Array.Empty<string>() : Answers.Issues(step);
+    }
 
-    public IReadOnlyList<string> AllIssues() => Answers.AllIssues();
+    public IReadOnlyList<string> AllIssues() => Enumerable.Range(0, FormSchema.ReviewStep).SelectMany(Issues).ToList();
+
+    // ---- several applications for the same employer
+
+    /// <summary>1 for the first application, 2 after one has been added, and so on.</summary>
+    public int ApplicationNumber => Batch.Saved.Count + 1;
+
+    /// <summary>A short message after an application was saved; cleared by the next navigation.</summary>
+    public string? Notice { get; private set; }
+
+    /// <summary>Saves the current application (request and applicant) and starts a blank one. Employer and transferor answers stay.</summary>
+    public bool AddApplication()
+    {
+        foreach (var step in new[] { FormSchema.RequestStep, FormSchema.ApplicantStep })
+        {
+            if (Answers.Issues(step).Count == 0) continue;
+
+            var moved = step != Step;
+            Step = step;
+            ShowRequired = true;
+            Changed?.Invoke();
+            if (moved) StepChanged?.Invoke();
+            return false;
+        }
+
+        var saved = Batch.SaveCurrentAndStartNew();
+        _documents[DocumentKind.Passport].Clear();            // the passport belonged to the application just saved
+        Step = FormSchema.RequestStep;
+        ShowRequired = false;
+        Notice = $"Saved \"{saved.Title}\". Employer details are kept. Now fill in application {ApplicationNumber}.";
+        Changed?.Invoke();
+        StepChanged?.Invoke();
+        return true;
+    }
+
+    public void RemoveApplication(Guid id)
+    {
+        Batch.Remove(id);
+        Changed?.Invoke();
+    }
 
     // ---- wizard
 
@@ -101,6 +148,7 @@ public sealed class FormSession
     public bool GoTo(int target)
     {
         target = Math.Clamp(target, 0, FormSchema.ReviewStep);
+        Notice = null;
 
         if (target > Step)
         {
@@ -128,7 +176,8 @@ public sealed class FormSession
     public void Reset()
     {
         foreach (var document in _documents.Values) document.Clear();
-        Answers.Clear();
+        Batch.Clear();
+        Notice = null;
         Step = 0;
         ShowRequired = false;
         Changed?.Invoke();

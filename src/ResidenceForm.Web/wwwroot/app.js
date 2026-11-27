@@ -1,8 +1,8 @@
 window.ssScroll = (id) => document.getElementById(id)?.scrollIntoView({ block: 'nearest' });
 
-window.downloadFileFromStream = async (fileName, streamRef) => {
+window.downloadFileFromStream = async (fileName, streamRef, contentType = 'application/pdf') => {
     const buffer = await streamRef.arrayBuffer();
-    const url = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }));
+    const url = URL.createObjectURL(new Blob([buffer], { type: contentType }));
     const a = document.createElement('a');
     a.href = url; a.download = fileName;
     document.body.appendChild(a); a.click(); a.remove();

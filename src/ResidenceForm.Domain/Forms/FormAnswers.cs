@@ -40,6 +40,26 @@ public sealed class FormAnswers
         _origins.Clear();
     }
 
+    // ---- splitting the answers into "this application" and "shared with the employer's other applications"
+
+    public IReadOnlyDictionary<string, string> ApplicationValues =>
+        _values.Where(v => FormSchema.IsApplicationField(v.Key)).ToDictionary(v => v.Key, v => v.Value);
+
+    public IReadOnlyDictionary<string, string> SharedValues =>
+        _values.Where(v => !FormSchema.IsApplicationField(v.Key)).ToDictionary(v => v.Key, v => v.Value);
+
+    /// <summary>Removes the application's own boxes and returns them; shared answers stay.</summary>
+    public IReadOnlyDictionary<string, string> TakeApplicationValues()
+    {
+        var taken = ApplicationValues;
+        foreach (var field in taken.Keys)
+        {
+            _values.Remove(field);
+            _origins.Remove(field);
+        }
+        return taken;
+    }
+
     // ---- dates: the form wants dd/MM/yyyy, the browser's date picker speaks yyyy-MM-dd
 
     public string? GetDateForPicker(string field) =>

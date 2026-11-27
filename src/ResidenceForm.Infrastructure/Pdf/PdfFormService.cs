@@ -12,6 +12,8 @@ namespace ResidenceForm.Infrastructure.Pdf;
 /// </summary>
 public sealed class PdfFormService : IFormTemplate, IFormDocumentWriter, IDisposable
 {
+    private const int PagesToKeep = 1;
+
     private readonly byte[] _blankPdf;
     private readonly List<PdfFieldDefinition> _fields = new();
     private readonly FlatPdfRenderer _flatRenderer;
@@ -71,11 +73,36 @@ public sealed class PdfFormService : IFormTemplate, IFormDocumentWriter, IDispos
             }
         }
 
+        KeepFirstPageOnly(document);
         document.Internals.Catalog.Elements.GetDictionary("/AcroForm")?.Elements.SetBoolean("/NeedAppearances", true);
 
         using var output = new MemoryStream();
         document.Save(output);
         return output.ToArray();
+    }
+
+    /// <summary>
+    /// The visa application is the first page; the companions page is not produced. Its fields are also taken out of the form's field
+    /// list, otherwise viewers would find fields whose page no longer exists.
+    /// </summary>
+    private void KeepFirstPageOnly(PdfDocument document)
+    {
+        var firstPageFields = _fields.Where(f => f.Page < PagesToKeep).Select(f => f.Name).ToHashSet();
+        var removedFields = _fields.Where(f => f.Page >= PagesToKeep).Select(f => f.Name).Where(name => !firstPageFields.Contains(name)).ToHashSet();
+
+        var fieldList = document.Internals.Catalog.Elements.GetDictionary("/AcroForm")?.Elements.GetArray("/Fields");
+        if (fieldList is not null)
+        {
+            for (var i = fieldList.Elements.Count - 1; i >= 0; i--)
+            {
+                if (PdfWidgets.Resolve(fieldList.Elements[i]) is PdfDictionary field && removedFields.Contains(PdfWidgets.AsText(field.Elements["/T"])))
+                {
+                    fieldList.Elements.RemoveAt(i);
+                }
+            }
+        }
+
+        while (document.PageCount > PagesToKeep) document.Pages.RemoveAt(document.PageCount - 1);
     }
 
     private void FillWidget(PdfDictionary widget, PdfFieldDefinition definition, string value)

@@ -12,6 +12,7 @@ namespace ResidenceForm.Infrastructure.Pdf;
 internal sealed class FlatPdfRenderer : IDisposable
 {
     private const float PageWidth = 595.32f, PageHeight = 841.92f;       // A4 in points
+    private const int PagesToKeep = 1;                                  // the companions page is not produced
     private const float MaxFontSize = 11f, MinFontSize = 5f;
 
     private readonly byte[] _pagesWithoutWidgets;
@@ -38,8 +39,7 @@ internal sealed class FlatPdfRenderer : IDisposable
 
         using (var pdf = SKDocument.CreatePdf(overlay))
         {
-            var pageCount = _fields.Max(f => f.Page) + 1;
-            for (var page = 0; page < pageCount; page++)
+            for (var page = 0; page < PagesToKeep; page++)
             {
                 using var canvas = pdf.BeginPage(PageWidth, PageHeight);
                 foreach (var field in _fields.Where(f => f.Page == page))
@@ -59,6 +59,7 @@ internal sealed class FlatPdfRenderer : IDisposable
     {
         using var templateStream = new MemoryStream(_pagesWithoutWidgets);
         using var document = PdfReader.Open(templateStream, PdfDocumentOpenMode.Modify);
+        while (document.PageCount > PagesToKeep) document.Pages.RemoveAt(document.PageCount - 1);
 
         for (var i = 0; i < document.PageCount; i++)
         {

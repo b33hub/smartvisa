@@ -8,7 +8,12 @@
 <PageTitle>Residence Request Assistant</PageTitle>
 
 <div class="progress" aria-hidden="true"><div class="bar" style="width:@((Session.Step + 1) * 100 / FormSchema.Steps.Length)%"></div></div>
-<p class="stepcount">Step @(Session.Step + 1) of @FormSchema.Steps.Length · <span class="req">*</span> = required</p>
+<p class="stepcount">Step @(Session.Step + 1) of @FormSchema.Steps.Length · <span class="req">*</span> = required@(Session.Batch.Saved.Count > 0 ? $" · Application {Session.ApplicationNumber}" : "")</p>
+
+@if (Session.Notice is not null)
+{
+    <div class="note ok">@Session.Notice</div>
+}
 
 @if (Session.ShowRequired && Session.Step < FormSchema.ReviewStep)
 {
@@ -94,6 +99,34 @@
             }
             @if (error != null) { <div class="note err">@error</div> }
 
+            @if (Applications.Count == 0)
+            {
+                <div class="note warn">There is no application to submit yet. Go back and fill one in.</div>
+            }
+            else if (Applications.Count > 1 || Session.Batch.Saved.Count > 0)
+            {
+                <div class="app-list">
+                    <h3>Applications (@Applications.Count)</h3>
+                    @for (var i = 0; i < Applications.Count; i++)
+                    {
+                        var index = i;
+                        var application = Applications[index];
+                        <div class="app-row @(index == SelectedIndex ? "selected" : "")">
+                            <button type="button" class="link" @onclick="() => SelectApplication(index)">@(index + 1). @application.Title</button>
+                            @if (application.SavedId is { } savedId)
+                            {
+                                <button type="button" class="btn danger small" disabled="@busy" @onclick="() => RemoveApplication(savedId)">Remove</button>
+                            }
+                            else
+                            {
+                                <span class="hint">current</span>
+                            }
+                        </div>
+                    }
+                    <p class="hint">The employer's details are the same in every application.</p>
+                </div>
+            }
+
             <div class="review">
                 <div class="summary">
                     @Summary("Request", RequestRows())
@@ -108,8 +141,8 @@
             </div>
 
             <div class="downloads">
-                <button type="button" class="btn primary" disabled="@(busy || Session.AllIssues().Count > 0)" @onclick="() => Download(false)">⬇ Download editable PDF</button>
-                <button type="button" class="btn" disabled="@(busy || Session.AllIssues().Count > 0)" @onclick="() => Download(true)">🖨 Download print-ready PDF</button>
+                <button type="button" class="btn primary" disabled="@(!CanDownload)" @onclick="() => Download(false)">⬇ Download editable @(Applications.Count > 1 ? "PDFs (ZIP)" : "PDF")</button>
+                <button type="button" class="btn" disabled="@(!CanDownload)" @onclick="() => Download(true)">🖨 Download print-ready @(Applications.Count > 1 ? "PDFs (ZIP)" : "PDF")</button>
             </div>
             <div class="note">
                 <b>Editable PDF:</b> every box stays a live form field. Open it in Adobe Acrobat to see Arabic text drawn correctly;
@@ -147,6 +180,10 @@
 
 <div class="actions">
     <button type="button" class="btn ghost" disabled="@(Session.IsBusy || Session.Step == FormSchema.RequestStep)" @onclick="() => Session.GoTo(Session.Step - 1)">← Back</button>
+    @if (Session.Step == FormSchema.ApplicantStep)
+    {
+        <button type="button" class="btn" disabled="@Session.IsBusy" title="Save this application and start another one for the same employer" @onclick="() => Session.AddApplication()">＋ Add another application</button>
+    }
     @if (Session.Step < FormSchema.ReviewStep)
     {
         <button type="button" class="btn primary" disabled="@Session.IsBusy" @onclick="() => Session.GoTo(Session.Step + 1)">@(Session.Step == FormSchema.TransferorStep ? "Review →" : "Next →")</button>
@@ -164,6 +201,28 @@
     private string PanelHint => Session.Step == FormSchema.ApplicantStep
         ? "Upload your passport to fill this step. You can skip it and type everything instead."
         : "Upload the sponsor's civil ID (front, back, or both) to fill this step. You can skip it and type everything instead.";
+
+    // ---- review: every application to submit, and which one the summary and preview show
+    private int selectedIndex;
+    private IReadOnlyList<ApplicationDocument> Applications => Session.Batch.BuildDocuments();
+    private int SelectedIndex => Math.Clamp(selectedIndex, 0, Math.Max(0, Applications.Count - 1));
+    private IReadOnlyDictionary<string, string> SelectedAnswers => Applications.Count == 0 ? Session.Answers.Values : Applications[SelectedIndex].Answers;
+    private string? ValueOf(string field) => SelectedAnswers.GetValueOrDefault(field);
+    private RequestKind? SelectedKind => FormSchema.Kinds.FirstOrDefault(k => k.Value == ValueOf(FieldNames.RequestKind));
+    private bool CanDownload => !busy && Applications.Count > 0 && Session.AllIssues().Count == 0;
+
+    private async Task SelectApplication(int index)
+    {
+        selectedIndex = index;
+        await BuildPreview();
+    }
+
+    private async Task RemoveApplication(Guid id)
+    {
+        Session.RemoveApplication(id);
+        selectedIndex = 0;
+        await BuildPreview();
+    }
 
     private byte[]? flatBytes;
     private bool previewPending, busy;
@@ -192,21 +251,22 @@
     private async Task BuildPreview()
     {
         busy = true; StateHasChanged();
-        try { flatBytes = await Task.Run(() => DocumentWriter.CreatePrintReady(Session.Answers)); previewPending = true; }
+        var answers = SelectedAnswers;
+        try { flatBytes = await Task.Run(() => DocumentWriter.CreatePreview(answers)); previewPending = true; }
         catch (Exception ex) { error = ex.Message; }
         busy = false;
     }
 
-    private async Task Download(bool flat)
+    private async Task Download(bool printReady)
     {
         try
         {
             error = null;
-            var bytes = flat ? flatBytes ?? await Task.Run(() => DocumentWriter.CreatePrintReady(Session.Answers))
-                             : await Task.Run(() => DocumentWriter.CreateEditable(Session.Answers));
-            using var ms = new MemoryStream(bytes);
-            using var reference = new DotNetStreamReference(ms);
-            await JS.InvokeVoidAsync("downloadFileFromStream", flat ? "residence-request-print.pdf" : "residence-request-editable.pdf", reference);
+            var batch = Session.Batch;
+            var file = await Task.Run(() => DocumentWriter.Create(batch, printReady));      // one PDF, or a ZIP with one PDF per application
+            using var stream = new MemoryStream(file.Content);
+            using var reference = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("downloadFileFromStream", file.FileName, reference, file.ContentType);
         }
         catch (Exception ex) { error = ex.Message; }
     }
@@ -228,19 +288,19 @@
         yield return FormSchema.Office;
         yield return FormSchema.Procedure;
         yield return new FieldSpec(FieldNames.RequestKind, "Request for", FieldType.Text);
-        if (Session.Kind is { } k) yield return FormSchema.TypeSpec(k);
+        if (SelectedKind is { } k) yield return FormSchema.TypeSpec(k);
     }
 
     private RenderFragment Summary(string title, IEnumerable<FieldSpec> specs) => @<div class="group">
         <h4>@title</h4>
         @foreach (var s in specs)
         {
-            var v = Session.Get(s.Pdf);
+            var v = ValueOf(s.Pdf);
             <div class="row @(string.IsNullOrWhiteSpace(v) ? "empty" : "")">
                 <span class="k">@s.Label</span>
                 <span class="v">
                     @if (string.IsNullOrWhiteSpace(v)) { <text>—</text> }
-                    else if (s.Pdf == FieldNames.RequestKind) { <text>@Session.Kind?.Title <span class="ar" dir="rtl" lang="ar">@Session.Kind?.Arabic</span></text> }
+                    else if (s.Pdf == FieldNames.RequestKind) { <text>@SelectedKind?.Title <span class="ar" dir="rtl" lang="ar">@SelectedKind?.Arabic</span></text> }
                     else if (s.Type == FieldType.Choice && Options.Find(s.Pdf, v) is { } it)
                     {
                         <text>@it.Label</text>@if (it.English != null) { <span class="ar" dir="rtl" lang="ar">@it.Arabic</span> }

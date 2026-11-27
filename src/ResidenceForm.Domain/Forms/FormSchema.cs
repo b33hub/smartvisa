@@ -88,6 +88,20 @@ public static class FormSchema
         new FieldSpec(FieldNames.TransferorName, "Name / authority / company", Arabic: true, Wide: true),
     });
 
+    private static readonly Lazy<HashSet<string>> ApplicationFields = new(() =>
+    {
+        var names = new HashSet<string> { Office.Pdf, Procedure.Pdf, FieldNames.RequestKind };
+        names.UnionWith(Kinds.Select(kind => kind.TypeField));
+        names.UnionWith(Applicant.Fields.Select(field => field.Pdf));
+        return names;
+    });
+
+    /// <summary>
+    /// True for the boxes that belong to ONE application (request and applicant). Everything else (employer, transferor) is shared by
+    /// all applications of the same employer.
+    /// </summary>
+    public static bool IsApplicationField(string pdfField) => ApplicationFields.Value.Contains(pdfField);
+
     /// <summary>The fields a wizard step collects (the request step's type dropdown depends on the chosen kind, see <see cref="FormAnswers"/>).</summary>
     public static IEnumerable<FieldSpec> SpecsForStep(int step) => step switch
     {
